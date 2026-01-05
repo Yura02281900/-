@@ -1,29 +1,289 @@
---[[
-    YURA HUB - SECURED VERSION
-]]
-local function _decode(_str)
-    local _b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    _str = string.gsub(_str, '[^'.._b..'=]', '')
-    return (_str:gsub('.', function(x)
-        if (x == '=') then return '' end
-        local r,f='',( _b:find(x)-1)
-        for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
-        return r;
-    end):gsub('%d%d%d%d%d%d%d%d', function(x)
-        local c=0
-        for i=1,8 do if(x:sub(i,i)=='1') then c=c+2^(8-i) end end
-        return string.char(c)
-    end))
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- --- 設定変数 ---
+local SpeedEnabled, SpeedValue = false, 16
+local JumpEnabled, JumpValue = false, 50
+local InfiniteJumpEnabled = false
+local AutoClickEnabled = false
+local ClickCPS = 10 
+local ClickType = "Left"
+
+-- チャット連投用
+local SpamWord, SpamCount, SpamSpeed = "", 20, 0.2
+local IsSpamming = false
+
+-- 視点用
+local FOVEnabled = false
+local FOVValue = 70
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local VU = game:GetService("VirtualUser")
+local UIS = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local Camera = workspace.CurrentCamera
+
+-- ターゲット変数
+local TrollTarget, SpyTarget = nil, nil
+local Trolling, TrollMode, TrollDistance = false, "Front", 3
+
+-- テレポート用変数
+local TeleportTarget = nil
+local TPNameInput = ""
+
+local Window = Rayfield:CreateWindow({
+   Name = "ゆらHUB | 最終完成版",
+   LoadingTitle = "YURA SYSTEM V10",
+   LoadingSubtitle = "by ゆら",
+   KeySystem = true, 
+   KeySettings = {
+      Title = "認証システム",
+      Key = {"Yura pass"}
+   }
+})
+
+-- --- 【制作者タブ】 ---
+local CreditsTab = Window:CreateTab("制作者", 4483362458)
+CreditsTab:CreateSection("👤 クレジット")
+CreditsTab:CreateLabel("制作者: ゆら")
+CreditsTab:CreateButton({
+    Name = "Discord サーバーに参加 (リンクをコピー)",
+    Callback = function()
+        setclipboard("https://discord.gg/MgtJwumY7c")
+        Rayfield:Notify({Title = "コピー完了", Content = "Discordリンクをコピーしました！", Duration = 5})
+    end
+})
+
+-- --- 【1. プレイヤー タブ】 ---
+local MainTab = Window:CreateTab("プレイヤー", 4483362458)
+MainTab:CreateSection("🏃 移動設定")
+MainTab:CreateToggle({Name = "スピード有効化", CurrentValue = false, Callback = function(v) SpeedEnabled = v end})
+MainTab:CreateSlider({Name = "スピード数値", Range = {16, 500}, Increment = 1, CurrentValue = 16, Callback = function(v) SpeedValue = v end})
+MainTab:CreateSection("🚀 ジャンプ設定")
+MainTab:CreateToggle({Name = "ジャンプ有効化", CurrentValue = false, Callback = function(v) 
+    JumpEnabled = v 
+    if not v then pcall(function() LP.Character.Humanoid.JumpPower = 25 end) end
+end})
+MainTab:CreateSlider({Name = "ジャンプ数値", Range = {25, 500}, Increment = 1, CurrentValue = 50, Callback = function(v) JumpValue = v end})
+MainTab:CreateToggle({Name = "無限ジャンプ", CurrentValue = false, Callback = function(v) InfiniteJumpEnabled = v end})
+MainTab:CreateButton({Name = "Fly GUIを起動", Callback = function() loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-fly-gui-v3-46328"))() end})
+
+-- --- 【2. テレポート タブ】 ---
+local TPTab = Window:CreateTab("テレポート", 4483362458)
+
+-- 上側にプレイヤーテレポート
+TPTab:CreateSection("📍 プレイヤーへ移動")
+local TPDropdown = TPTab:CreateDropdown({
+    Name = "リストから選択",
+    Options = {},
+    Callback = function(Option)
+        local targetName = type(Option) == "table" and Option[1] or Option
+        TeleportTarget = Players:FindFirstChild(targetName)
+    end,
+})
+TPTab:CreateButton({
+    Name = "選択した人へ飛ぶ",
+    Callback = function()
+        if TeleportTarget and TeleportTarget.Character and TeleportTarget.Character:FindFirstChild("HumanoidRootPart") then
+            LP.Character.HumanoidRootPart.CFrame = TeleportTarget.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+        end
+    end
+})
+TPTab:CreateInput({
+    Name = "名前検索",
+    PlaceholderText = "Username...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(v) TPNameInput = v:lower() end
+})
+TPTab:CreateButton({
+    Name = "入力した名前の人へ飛ぶ",
+    Callback = function()
+        if TPNameInput == "" then return end
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and (string.find(p.Name:lower(), TPNameInput) or string.find(p.DisplayName:lower(), TPNameInput)) then
+                if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                    LP.Character.HumanoidRootPart.CFrame = p.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+                    break
+                end
+            end
+        end
+    end
+})
+
+-- 下側に地点テレポート
+TPTab:CreateSection("🏠 地点テレポート (ボタン式)")
+
+local function CreateTPButton(name, pos)
+    TPTab:CreateButton({
+        Name = name,
+        Callback = function()
+            if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+                LP.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
+            end
+        end
+    })
 end
 
--- コードの本体を分割して読み込むことで、クラッシュを防ぎます
-local _c1 = "bG9jYWwgUmF5ZmllbGQgPSBsb2Fkc3RyaW5nKGdhbWU6SHR0cEdldCgnaHR0cHM6Ly9zaXJpdXMubWVudS9yYXlmaWVsZCcpKSgpCmxvY2FsIFdpbmRvdyA9IFJheWZpZWxkOkNyZWF0ZVdpbmRvdyh7IE5hbWUgPSAi5mKqSFVCIHwg5pyA57WC5a6M5oiQ54mIIiwgS2V5U3lzdGVtID0gdHJ1ZSwgS2V5U2V0dGluZ3MgPSB7IEtleSA9IHsiWXVyYSBwYXNzIn0gfSB9KQo="
-local _c2 = "bG9jYWwgTWFpblRhYiA9IFdpbmRvdzpDcmVhdGVUYWIoIuODOXODnuOCpOODoOODvCIsIDQ0ODMzNjI0NTgpCk1haW5UYWI6Q3JlYXRlU2VjdGlvbigi6buE54OWLleioreWumSIpCk1haW5UYWI6Q3JlYXRlVG9nZ2xlKHsgTmFtZSA9ICLgrnjgrTjg7zjg4nmnInlip losZ0iLCBDYWxsYmFjayA9IGZ1bmN0aW9uKHYpIFNwZWVkRW5hYmxlZCA9IHYgZW5kIH0p"
--- （以下、全機能のデータを復号して実行）
+-- 全地点リスト
+CreateTPButton("⭐ 初期値", Vector3.new(2.31, -7.35, -1.75))
+CreateTPButton("緑の家", Vector3.new(-534.05, -7.35, 66.36))
+CreateTPButton("赤い家", Vector3.new(-466.73, -7.35, -142.37))
+CreateTPButton("青い家", Vector3.new(499.39, 83.34, -353.00))
+CreateTPButton("黄色い家", Vector3.new(538.55, 123.34, -93.89))
+CreateTPButton("紫の家", Vector3.new(273.90, -7.35, 436.23))
+CreateTPButton("黄緑の家", Vector3.new(-266.30, 80.65, 310.76))
+CreateTPButton("スロット1", Vector3.new(-527.04, -7.35, -36.47))
+CreateTPButton("スロット2", Vector3.new(57.15, -5.87, -105.12))
+CreateTPButton("スロット3", Vector3.new(-223.21, 83.65, 407.80))
+CreateTPButton("スロット4", Vector3.new(565.16, 83.34, -233.11))
+CreateTPButton("UFO", Vector3.new(10.68, 61.11, -282.15))
+CreateTPButton("動物小屋", Vector3.new(-178.34, 59.78, -273.22))
+CreateTPButton("工場", Vector3.new(60.91, 346.19, 320.09))
+CreateTPButton("毒低い", Vector3.new(82.85, -27.41, 243.25))
+CreateTPButton("毒高い", Vector3.new(135.10, -5.39, 262.87))
+CreateTPButton("タイマン1", Vector3.new(-691.37, -5.85, -111.59))
+CreateTPButton("タイマン2", Vector3.new(404.10, -7.35, -572.08))
+CreateTPButton("洞窟でかい", Vector3.new(-362.16, -7.35, 265.81))
+CreateTPButton("洞窟小さい", Vector3.new(468.86, -7.35, -503.65))
 
--- 実行
-local _s = _decode(_c1) .. _decode(_c2) .. _decode("bG9jYWwgVFBUMWIgPSBXaW5kb3Y6Q3JlYXRlVGFiKCLjg7bjg6zjg73jg7zjODkiLCA0NDgzMzYyNDU4KQ==")
+-- --- 視点・荒らし・オートクリッカー ---
+local ViewTab = Window:CreateTab("視点", 4483362458)
+ViewTab:CreateSection("👁 視野角 (FOV) 設定")
+ViewTab:CreateToggle({Name = "FOV有効化", CurrentValue = false, Callback = function(v) 
+    FOVEnabled = v 
+    if not v then Camera.FieldOfView = 70 end
+end})
+ViewTab:CreateSlider({Name = "FOV数値", Range = {30, 120}, Increment = 1, CurrentValue = 70, Callback = function(v) FOVValue = v end})
+ViewTab:CreateSection("📷 カメラ視点切替")
+ViewTab:CreateButton({Name = "一人称モード", Callback = function()
+    LP.CameraMode = Enum.CameraMode.LockFirstPerson
+    LP.CameraMaxZoomDistance = 0.5; LP.CameraMinZoomDistance = 0.5
+end})
+ViewTab:CreateButton({Name = "三人称モード (自由ズーム)", Callback = function()
+    LP.CameraMode = Enum.CameraMode.Classic
+    LP.CameraMinZoomDistance = 0.5; LP.CameraMaxZoomDistance = 100000
+end})
 
--- 念のため、元の生コードも安全な形でラップして実行します
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Yura02281900/Yurahub/main/Yurahub_Original_Source_Check"))() 
--- ※もし上が動かない場合、GitHubの「Yurahub」ファイルを一度空にして、最初に成功した「長いコード」を貼り直してください。
+local TrollTab = Window:CreateTab("荒らし", 4483362458)
+local TrollDropdown = TrollTab:CreateDropdown({
+    Name = "対象を選択",
+    Options = {},
+    Callback = function(Option) TrollTarget = Players:FindFirstChild(type(Option) == "table" and Option[1] or Option) end,
+})
+TrollTab:CreateToggle({Name = "荒らし開始", CurrentValue = false, Callback = function(v) Trolling = v end})
+TrollTab:CreateDropdown({Name = "位置設定", Options = {"前", "後"}, CurrentOption = "前", Callback = function(Option) TrollMode = (type(Option) == "table" and Option[1] or Option) == "前" and "Front" or "Back" end})
+TrollTab:CreateSlider({Name = "距離", Range = {0, 20}, Increment = 1, CurrentValue = 3, Callback = function(v) TrollDistance = v end})
+
+local SpyTab = Window:CreateTab("盗聴", 4483362458)
+local SpyDropdown = SpyTab:CreateDropdown({
+    Name = "対象を選択",
+    Options = {},
+    Callback = function(Option) SpyTarget = Players:FindFirstChild(type(Option) == "table" and Option[1] or Option) end,
+})
+SpyTab:CreateButton({Name = "観戦開始", Callback = function() if SpyTarget and SpyTarget.Character then workspace.CurrentCamera.CameraSubject = SpyTarget.Character:FindFirstChild("Humanoid") end end})
+SpyTab:CreateButton({Name = "観戦解除", Callback = function() if LP.Character then workspace.CurrentCamera.CameraSubject = LP.Character.Humanoid end end})
+
+local ClickTab = Window:CreateTab("オートクリッカー", 4483362458)
+ClickTab:CreateSection("クリック設定")
+ClickTab:CreateToggle({Name = "オートクリック有効化", CurrentValue = false, Callback = function(v) AutoClickEnabled = v end})
+ClickTab:CreateSlider({Name = "秒速 (CPS)", Range = {1, 100}, Increment = 1, CurrentValue = 10, Callback = function(v) ClickCPS = v end})
+ClickTab:CreateDropdown({
+    Name = "使用ボタン",
+    Options = {"左クリック", "右クリック"},
+    CurrentOption = "左クリック",
+    Callback = function(Option)
+        local choice = type(Option) == "table" and Option[1] or Option
+        ClickType = (choice == "左クリック") and "Left" or "Right"
+    end,
+})
+
+local SpamTab = Window:CreateTab("チャット荒らし", 4483362458)
+SpamTab:CreateInput({Name = "連投する言葉", PlaceholderText = "内容...", RemoveTextAfterFocusLost = false, Callback = function(v) SpamWord = v end})
+SpamTab:CreateInput({Name = "回数", PlaceholderText = "20", RemoveTextAfterFocusLost = false, Callback = function(v) SpamCount = tonumber(v) or 20 end})
+SpamTab:CreateInput({Name = "秒速 (送信間隔)", PlaceholderText = "0.2", RemoveTextAfterFocusLost = false, Callback = function(v) SpamSpeed = tonumber(v) or 0.2 end})
+
+local function sendMessage(msg)
+    if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+        local channel = TextChatService.TextChannels.RBXGeneral
+        if channel then channel:SendAsync(msg) end
+    else
+        local remote = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+        if remote and remote:FindFirstChild("SayMessageRequest") then
+            remote.SayMessageRequest:FireServer(msg, "All")
+        end
+    end
+end
+
+SpamTab:CreateButton({
+    Name = "連投開始",
+    Callback = function()
+        if IsSpamming or SpamWord == "" then return end
+        IsSpamming = true
+        for i = 1, SpamCount do
+            if not IsSpamming then break end
+            sendMessage(SpamWord)
+            task.wait(SpamSpeed)
+        end
+        IsSpamming = false
+    end
+})
+SpamTab:CreateButton({Name = "中止 (STOP)", Callback = function() IsSpamming = false end})
+
+local function Refresh()
+    local names = {}
+    for _, p in pairs(Players:GetPlayers()) do if p ~= LP then table.insert(names, p.Name) end end
+    TrollDropdown:Refresh(names, true)
+    SpyDropdown:Refresh(names, true)
+    TPDropdown:Refresh(names, true)
+end
+Players.PlayerAdded:Connect(Refresh); Players.PlayerRemoving:Connect(Refresh); Refresh()
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        local char = LP.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        if root and hum then
+            if SpeedEnabled and hum.MoveDirection.Magnitude > 0 then
+                root.Velocity = Vector3.new(hum.MoveDirection.X * SpeedValue, root.Velocity.Y, hum.MoveDirection.Z * SpeedValue)
+            end
+            if JumpEnabled then
+                hum.UseJumpPower = true; hum.JumpPower = JumpValue
+            elseif hum.JumpPower ~= 25 then
+                hum.UseJumpPower = true; hum.JumpPower = 25
+            end
+            if Trolling and TrollTarget and TrollTarget.Character then
+                local tRoot = TrollTarget.Character:FindFirstChild("HumanoidRootPart")
+                if tRoot then
+                    local offset = (TrollMode == "Front" and tRoot.CFrame.LookVector * TrollDistance) or (tRoot.CFrame.LookVector * -TrollDistance)
+                    root.CFrame = tRoot.CFrame + offset
+                end
+            end
+        end
+        if FOVEnabled then Camera.FieldOfView = FOVValue end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        if AutoClickEnabled then
+            pcall(function()
+                if ClickType == "Left" then
+                    VU:Button1Down(Vector2.new(0, 0))
+                    VU:Button1Up(Vector2.new(0, 0))
+                else
+                    VU:Button2Down(Vector2.new(0, 0))
+                    VU:Button2Up(Vector2.new(0, 0))
+                end
+                if LP.Character then
+                    local tool = LP.Character:FindFirstChildOfClass("Tool")
+                    if tool then tool:Activate() end
+                end
+            end)
+        end
+        task.wait(1 / ClickCPS)
+    end
+end)
+
+UIS.JumpRequest:Connect(function() if InfiniteJumpEnabled and LP.Character then LP.Character.Humanoid:ChangeState("Jumping") end end)
