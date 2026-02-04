@@ -1,0 +1,224 @@
+-- TYHUB: ULTIMATE FULL VERSION V29 (FULL RESTORED & DAN ENGINE)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local FindFirstChild = game.FindFirstChild
+local GetPlayers = Players.GetPlayers
+
+-- HRP初期化 & 死亡時自動更新 (DAN Special指定)
+local HRP = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    or LP.CharacterAdded:Wait():WaitForChild("HumanoidRootPart")
+
+LP.CharacterAdded:Connect(function(char)
+    HRP = char:WaitForChild("HumanoidRootPart")
+end)
+
+-- --- 全グローバル変数の初期化 ---
+_G.SilentAimEnabled = false
+_G.SilentAimRange = 30
+_G.AutoAimEnabled = false
+_G.AutoAimRange = 1000 
+_G.SpeedEnabled = false
+_G.CFrameSpeedValue = 1
+_G.InfiniteJumpEnabled = false
+_G.InfJumpLevel = 1
+_G.NoclipEnabled = false
+_G.JumpPowerEnabled = false
+_G.JumpPowerValue = 50
+_G.FOVEnabled = false
+_G.FOVValue = 70
+_G.ESPEnabled = false
+_G.ESPNames = false
+_G.ESPDistance = false
+_G.LoopTPEnabled = false
+_G.FollowEnabled = false
+_G.FollowDistance = 3
+_G.FollowSide = "Back"
+
+local followTarget = ""
+local selectedPlayer = "" 
+local targetPlayerID = "" 
+local spyTarget = nil    
+local originalPos = nil  
+
+-- --- 【DAN Special サイレントエイム (Raycast)】 ---
+local function GetDirection(Origin, Position)
+    return (Position - Origin).Unit * (Origin - Position).Magnitude
+end
+
+local function GetClosestPlayerInWorld()
+    local Closest, Distance = nil, _G.SilentAimRange
+    if not HRP then return nil end
+    for _, Player in next, GetPlayers(Players) do
+        if Player ~= LP then
+            local Character = Player.Character
+            local Head = Character and FindFirstChild(Character, "Head")
+            local Humanoid = Character and FindFirstChild(Character, "Humanoid")
+            if Head and Humanoid and Humanoid.Health > 0 then
+                local d = (HRP.Position - Head.Position).Magnitude
+                if d <= Distance then Closest = Head Distance = d end
+            end
+        end
+    end
+    return Closest
+end
+
+local oldNamecall = nil
+local function HookSilentAim()
+    if oldNamecall then return end
+    oldNamecall = hookmetamethod(game, "__namecall", function(...)
+        local Method = getnamecallmethod()
+        local Arguments = {...}
+        if _G.SilentAimEnabled and Arguments[1] == workspace and Method == "Raycast" then
+            if typeof(Arguments[#Arguments]) == "RaycastParams" then
+                local HitPart = GetClosestPlayerInWorld()
+                if HitPart then
+                    Arguments[3] = GetDirection(Arguments[2], HitPart.Position)
+                    return oldNamecall(unpack(Arguments))
+                end
+            end
+        end
+        return oldNamecall(...)
+    end)
+end
+HookSilentAim()
+
+-- --- 【メインループ (FOV 70リセット / Speed / Follow / Noclip)】 ---
+RunService.Stepped:Connect(function()
+    local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+    if not HRP or not hum then return end
+
+    if _G.NoclipEnabled then
+        for _, v in pairs(LP.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
+    end
+    if _G.JumpPowerEnabled then hum.JumpPower = _G.JumpPowerValue; hum.UseJumpPower = true end
+    
+    -- FOV制御: OFFの時は70に強制リセット
+    if _G.FOVEnabled then 
+        Camera.FieldOfView = _G.FOVValue 
+    else
+        if Camera.FieldOfView ~= 70 then Camera.FieldOfView = 70 end
+    end
+
+    if _G.AutoAimEnabled then
+        local target = GetClosestPlayerInWorld() 
+        if target then Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Position) end
+    end
+    
+    if _G.SpeedEnabled and hum.MoveDirection.Magnitude > 0 then 
+        HRP.CFrame = HRP.CFrame + (hum.MoveDirection * (_G.CFrameSpeedValue / 10)) 
+    end
+    
+    if _G.FollowEnabled and followTarget ~= "" then
+        local t = Players:FindFirstChild(followTarget); if t and t.Character and t.Character:FindFirstChild("HumanoidRootPart") then
+            local tHRP = t.Character.HumanoidRootPart
+            local offset = (_G.FollowSide == "Front") and (tHRP.CFrame.LookVector * _G.FollowDistance) or (tHRP.CFrame.LookVector * -_G.FollowDistance)
+            HRP.CFrame = tHRP.CFrame + offset
+        end
+    end
+    if _G.LoopTPEnabled and selectedPlayer ~= "" then
+        local t = Players:FindFirstChild(selectedPlayer); if t and t.Character then HRP.CFrame = t.Character.HumanoidRootPart.CFrame end
+    end
+end)
+
+-- 無限ジャンプ (5段階)
+UserInputService.JumpRequest:Connect(function()
+    if _G.InfiniteJumpEnabled and LP.Character and LP.Character:FindFirstChildOfClass("Humanoid") then
+        LP.Character:FindFirstChildOfClass("Humanoid"):ChangeState("Jumping")
+        if HRP then HRP.Velocity = Vector3.new(HRP.Velocity.X, (_G.InfJumpLevel * 20), HRP.Velocity.Z) end
+    end
+end)
+
+-- --- ESP ---
+local function CreateESP(Player)
+    local Name = Drawing.new("Text")
+    Name.Visible = false; Name.Color = Color3.new(1,1,1); Name.Size = 16; Name.Center = true; Name.Outline = true
+    local Distance = Drawing.new("Text")
+    Distance.Visible = false; Distance.Color = Color3.new(1,1,1); Distance.Size = 14; Distance.Center = true; Distance.Outline = true
+    
+    RunService.RenderStepped:Connect(function()
+        if _G.ESPEnabled and Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") then
+            local p_hrp = Player.Character.HumanoidRootPart
+            local pos, onScreen = Camera:WorldToViewportPoint(p_hrp.Position)
+            if onScreen then
+                if _G.ESPNames then Name.Text = Player.Name; Name.Position = Vector2.new(pos.X, pos.Y - 20); Name.Visible = true else Name.Visible = false end
+                if _G.ESPDistance then
+                    local d = (p_hrp.Position - (HRP and HRP.Position or Vector3.new())).Magnitude
+                    Distance.Text = math.floor(d).."m"; Distance.Position = Vector2.new(pos.X, pos.Y + 5); Distance.Visible = true
+                else Distance.Visible = false end
+            else Name.Visible = false; Distance.Visible = false end
+        else Name.Visible = false; Distance.Visible = false end
+    end)
+end
+for _, p in pairs(Players:GetPlayers()) do if p ~= LP then CreateESP(p) end end
+Players.PlayerAdded:Connect(CreateESP)
+
+-- --- UI ---
+local vu5 = loadstring(game:HttpGet("https://raw.githubusercontent.com/Jeffepicy/OrionGod/refs/heads/main/CosmicOrion", true))()
+local Window = vu5:MakeWindow({ Name = "TYHUB V29", IntroText = "Welcome ゆらHUB", HidePremium = false, SaveConfig = false })
+
+-- 1. AIM
+local AimTab = Window:MakeTab({ Name = "AIM" })
+AimTab:AddToggle({ Name = "Silent Aim / サイレントエイム", Default = false, Callback = function(s) _G.SilentAimEnabled = s end })
+AimTab:AddSlider({ Name = "Silent Range / サイレント射程", Min = 5, Max = 30, Default = 30, Increment = 0.5, Callback = function(v) _G.SilentAimRange = v end })
+AimTab:AddToggle({ Name = "Auto Aim / オートエイム", Default = false, Callback = function(s) _G.AutoAimEnabled = s end })
+AimTab:AddSlider({ Name = "Auto Range / オート射程", Min = 10, Max = 3000, Default = 300, Increment = 10, Callback = function(v) _G.AutoAimRange = v end })
+
+-- 2. View / 視点
+local ViewTab = Window:MakeTab({ Name = "View / 視点" })
+ViewTab:AddToggle({ Name = "FOV Enable / FOV有効化", Default = false, Callback = function(s) _G.FOVEnabled = s end })
+ViewTab:AddSlider({ Name = "FOV Value / FOV値", Min = 30, Max = 120, Default = 70, Increment = 1, Callback = function(v) _G.FOVValue = v end })
+ViewTab:AddButton({ Name = "1st Person / 一人称", Callback = function() LP.CameraMode = Enum.CameraMode.LockFirstPerson end })
+ViewTab:AddButton({ Name = "3rd Person / 三人称", Callback = function() LP.CameraMode = Enum.CameraMode.Classic end })
+
+-- 3. Player / プレイヤー
+local PlayerTab = Window:MakeTab({ Name = "Player / プレイヤー" })
+PlayerTab:AddToggle({ Name = "Speed Enable / スピード有効化", Default = false, Callback = function(s) _G.SpeedEnabled = s end })
+PlayerTab:AddSlider({ Name = "Speed Multi / スピード倍率", Min = 1, Max = 100, Default = 1, Increment = 1, Callback = function(v) _G.CFrameSpeedValue = v end })
+PlayerTab:AddToggle({ Name = "Jump Power / ジャンプ力有効化", Default = false, Callback = function(s) _G.JumpPowerEnabled = s end })
+PlayerTab:AddSlider({ Name = "Jump Power Value / ジャンプ力数値", Min = 50, Max = 500, Default = 50, Increment = 1, Callback = function(v) _G.JumpPowerValue = v end })
+PlayerTab:AddToggle({ Name = "Infinite Jump / 無限ジャンプ", Default = false, Callback = function(s) _G.InfiniteJumpEnabled = s end })
+PlayerTab:AddSlider({ Name = "Inf Jump Level / ジャンプ段階(1-5)", Min = 1, Max = 5, Default = 1, Increment = 1, Callback = function(v) _G.InfJumpLevel = v end })
+PlayerTab:AddToggle({ Name = "Noclip / 壁貫通", Default = false, Callback = function(s) _G.NoclipEnabled = s end })
+
+-- 4. Teleport / テレポート
+local TeleportTab = Window:MakeTab({ Name = "Teleport / テレポート" })
+TeleportTab:AddTextbox({ Name = "ID or Name / IDか名前を入力", Default = "", TextDisappear = false, Callback = function(v) targetPlayerID = v end })
+TeleportTab:AddButton({ Name = "TP to ID / IDテレポート実行", Callback = function() 
+    for _, p in pairs(Players:GetPlayers()) do if tostring(p.UserId) == targetPlayerID or p.Name:lower():find(targetPlayerID:lower()) then if p.Character then HRP.CFrame = p.Character.HumanoidRootPart.CFrame end break end end 
+end })
+local PTDropDown = TeleportTab:AddDropdown({ Name = "Select Player / 人を選択", Options = {}, Callback = function(v) selectedPlayer = v end })
+TeleportTab:AddToggle({ Name = "Loop TP / ループテレポート", Default = false, Callback = function(s) _G.LoopTPEnabled = s end })
+local locs = {{"初期値", Vector3.new(2.31, -7.35, -1.75)},{"緑の家", Vector3.new(-534.05, -7.35, 66.36)},{"赤い家", Vector3.new(-466.73, -7.35, -142.37)},{"青い家", Vector3.new(499.39, 83.34, -353.00)},{"黄色の家", Vector3.new(538.55, 123.34, -93.89)},{"紫の家", Vector3.new(273.90, -7.35, 436.23)},{"スロット1", Vector3.new(-527.04, -7.35, -36.47)},{"スロット2", Vector3.new(57.15, -5.87, -105.12)},{"スロット3", Vector3.new(-223.21, 83.65, 407.80)},{"スロット4", Vector3.new(565.16, 83.34, -233.11)},{"UFO", Vector3.new(10.68, 61.11, -282.15)},{"動物小屋", Vector3.new(-178.34, 59.78, -273.22)},{"工場", Vector3.new(60.91, 346.19, 320.09)},{"毒1", Vector3.new(82.85, -27.41, 243.25)},{"毒2", Vector3.new(135.10, -5.39, 262.87)},{"タイマン1", Vector3.new(-691.37, -5.85, -111.59)},{"タイマン2", Vector3.new(404.10, -7.35, -572.08)},{"洞窟1", Vector3.new(-362.16, -7.35, 265.81)},{"洞窟2", Vector3.new(468.86, -7.35, -503.65)}}
+for _, v in ipairs(locs) do TeleportTab:AddButton({ Name = v[1], Callback = function() if HRP then HRP.CFrame = CFrame.new(v[2]) end end }) end
+
+-- 5. ESP
+local ESPTab = Window:MakeTab({ Name = "ESP" })
+ESPTab:AddToggle({ Name = "ESP Enable / ESP有効化", Default = false, Callback = function(s) _G.ESPEnabled = s end })
+ESPTab:AddToggle({ Name = "Name / 名前表示", Default = false, Callback = function(s) _G.ESPNames = s end })
+ESPTab:AddToggle({ Name = "Distance / 距離表示", Default = false, Callback = function(s) _G.ESPDistance = s end })
+
+-- 6. Spy / 盗聴
+local SpyTab = Window:MakeTab({ Name = "Spy / 盗聴" })
+local SpyDropDown = SpyTab:AddDropdown({ Name = "Select Target / ターゲット選択", Options = {}, Callback = function(v) spyTarget = Players:FindFirstChild(v) end })
+SpyTab:AddButton({ Name = "Watch / 監視開始", Callback = function() if spyTarget and spyTarget.Character then originalPos = HRP.CFrame; HRP.CFrame = CFrame.new(0, 5000, 0); Camera.CameraSubject = spyTarget.Character.Humanoid end end })
+SpyTab:AddButton({ Name = "Return / 帰還", Callback = function() if originalPos then HRP.CFrame = originalPos; Camera.CameraSubject = LP.Character.Humanoid end end })
+
+-- 7. Arashi / 荒らし
+local ArashiTab = Window:MakeTab({ Name = "Arashi / 荒らし" })
+local ArashiDropDown = ArashiTab:AddDropdown({ Name = "Select Target / 相手を選択", Options = {}, Callback = function(v) followTarget = v end })
+ArashiTab:AddDropdown({ Name = "Side / 位置", Default = "Back", Options = {"Front", "Back"}, Callback = function(v) _G.FollowSide = v end })
+ArashiTab:AddSlider({ Name = "Distance / 距離", Min = 0, Max = 15, Default = 3, Increment = 1, Callback = function(v) _G.FollowDistance = v end })
+ArashiTab:AddToggle({ Name = "Follow Start / はりつき開始", Default = false, Callback = function(s) _G.FollowEnabled = s end })
+
+-- 更新処理
+local function Update()
+    local pList = {}
+    for _, p in pairs(Players:GetPlayers()) do if p ~= LP then table.insert(pList, p.Name) end end
+    pcall(function() PTDropDown:Refresh(pList, true) end)
+    pcall(function() ArashiDropDown:Refresh(pList, true) end)
+    pcall(function() SpyDropDown:Refresh(pList, true) end)
+end
+Players.PlayerAdded:Connect(Update); Players.PlayerRemoving:Connect(Update); Update()
